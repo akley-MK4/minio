@@ -1,0 +1,102 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "minio.fullname" . }}
+  labels:
+    {{- include "minio.labels" . | nindent 4 }}
+spec:
+  {{- if .Values.clusterMode.enabled }}
+  replicas: {{ .Values.clusterMode.replicas }}
+  {{- else }}
+  replicas: 1
+  {{- end }}
+  serviceName: {{ printf "%s-headless" (include "minio.fullname" .) }}
+  selector:
+    matchLabels:
+      {{- include "minio.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "minio.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "minio.serviceAccountName" . }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -ce
+            {{- if .Values.clusterMode.enabled }}
+            - /usr/bin/docker-entrypoint.sh minio -S /etc/minio/certs/ server {{ printf "https://%s-{0...1}.%s-headless.%s:%s/data" (include "minio.fullname" .) (include "minio.fullname" .) (include "minio.svcDomainSuffix" .) (toString .Values.service.api.port) }}
+            {{- else }}
+            - /usr/bin/docker-entrypoint.sh minio -S /etc/minio/certs/ server /data
+            {{- end }}
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.accessKeyName }}
+                  key: accessKeyId
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.accessKeyName }}
+                  key: secretAccessKey
+            - name: MINIO_CONSOLE_ADDRESS
+              value: 0.0.0.0:{{ .Values.service.console.port }}
+            - name: MINIO_BROWSER_REDIRECT_URL
+              value: {{ printf "https://%s-console.%s:%s" (include "minio.fullname" .) (include "minio.svcDomainSuffix" .) (toString .Values.gateway.port) }}
+          ports:
+            - name: api
+              containerPort: {{ .Values.service.api.port }}
+              protocol: TCP
+            - name: console
+              containerPort: {{ .Values.service.console.port }}
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: {{ .Values.storage.pvcName }}
+              mountPath: {{ .Values.storage.mountPath }}
+            - name: certs
+              mountPath: {{ .Values.cert.certsMountPath }}
+              readOnly: true
+            - name: trusted-cas
+              mountPath: {{ .Values.cert.casMountPath }}
+              readOnly: true 
+      volumes:
+        - name: {{ .Values.accessKeyName }}
+          secret:
+            secretName: {{ .Values.accessKeyName }}
+        - name: certs
+          secret:
+            items:
+              - key: tls.crt
+                path: public.crt
+              - key: tls.key
+                path: private.key
+            secretName: {{ .Values.cert.secretName }}
+        - name: trusted-cas
+          secret:
+            items:
+              - key: ca.crt
+                path: public.crt
+            secretName: {{ .Values.cert.secretName }}
+  volumeClaimTemplates:
+    - metadata:
+        name: {{ .Values.storage.pvcName }}
+      spec:
+        accessModes:
+        - {{ .Values.storage.accessMode }}
+        storageClassName: {{ .Values.storage.storageClassName }}
+        resources:
+          requests:
+            storage: {{ .Values.storage.size }}

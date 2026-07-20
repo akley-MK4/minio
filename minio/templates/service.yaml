@@ -1,0 +1,56 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ printf "%s-headless" (include "minio.fullname" .) }}
+  labels:
+    {{- include "minio.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    {{- include "minio.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: api
+      protocol: TCP
+      port: {{ .Values.service.api.port }}
+      targetPort: {{ .Values.service.api.port }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ printf "%s-api" (include "minio.fullname" .) }}
+  labels:
+    {{- include "minio.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.api.type }}
+  ports:
+    - name: api
+      protocol: TCP
+      port: {{ .Values.service.api.port }}
+      targetPort: {{ .Values.service.api.port }}
+      {{- if eq .Values.service.api.type "NodePort" }}
+      nodePort: {{ .Values.service.api.nodePort }}
+      {{- end }}
+  selector:
+    {{- include "minio.selectorLabels" . | nindent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ printf "%s-console" (include "minio.fullname" .) }}
+  labels:
+    {{- include "minio.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.console.type }}
+  ports:
+    - name: console
+      protocol: TCP
+      appProtocol: kubernetes.io/wss
+      port: {{ .Values.service.console.port }}
+      targetPort: {{ .Values.service.console.port }}
+      {{- if eq .Values.service.console.type "NodePort" }}
+      nodePort: {{ .Values.service.console.nodePort }}
+      {{- end }}
+  selector:
+    {{- include "minio.selectorLabels" . | nindent 4 }}
+    apps.kubernetes.io/pod-index: "0"
