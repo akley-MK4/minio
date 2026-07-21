@@ -1,0 +1,137 @@
+@startuml
+skinparam componentStyle rectangle
+skinparam rectangleRoundCorner 15
+skinparam monochrome false
+skinparam shadowing false
+skinparam arrowColor #333333
+skinparam arrowThickness 2
+
+skinparam component {
+  BackgroundColor #E8F4FD
+  BorderColor #2196F3
+  FontColor #333333
+}
+
+top to bottom direction
+
+' ========== 1. Clients ==========
+component "Browser" as browser #FFE0B2
+component "S3 Client (SDK / CLI)" as app #C8E6C9
+
+' ========== 2. Gateway (Console only) ==========
+package "Gateway (Console only)" as gw {
+    frame "Envoy Gateway :30737" as eg
+    frame "HTTPRoute\n/minio-console :9200" as http_route
+    component "BackendTLSPolicy\neg-minio-tls-backend" as btp
+}
+
+note right of btp
+  targetRefs:
+  • kind: Service
+  • name: minio-console
+  • port: console (9200)
+  validation:
+  • caCertificateRef: minio-tls (Secret)
+  • hostname: minio-console.s3.svc.cluster.local
+end note
+
+' ========== 3. Services ==========
+package "Services" as svc {
+    frame "minio-api (NodePort) :32002" as mpe
+    frame "minio-headless (ClusterIP) :9000" as hs
+    frame "minio-console (ClusterIP) :9200" as m_c
+}
+
+' ========== 4. MinIO Cluster ==========
+rectangle "MinIO StatefulSet" as sts {
+    component "Pod-0" as po0 {
+        [API]       as api_p0
+        [Console]   as console_0
+        [Data]      as data_p0
+        [Access Key]as access_0
+        [Certs]     as certs_0
+    }
+    component "Pod-1" as po1 {
+        [API]       as api_p1
+        [Console]   as console_1
+        [Data]      as data_p1
+        [Access Key]as access_1
+        [Certs]     as certs_1
+    }
+    api_p0 -> hs: sync data
+    hs --> api_p1: HTTPS
+    api_p1 -> hs: sync data
+    hs --> api_p0: HTTPS
+ 
+}
+
+' ========== 5. Storage & Secrets ==========
+package "Storage & Secrets" as infra {
+    database "PV-0\nminio-data-minio-0" as pv_p0
+    database "PV-1\nminio-data-minio-1" as pv_p1
+
+    package "Cert-Manager Flow" as cert_flow {
+        component "Issuer / ClusterIssuer" as issuer
+        component "Certificate\nminio-cert" as cert
+        component "Secret\nminio-tls" as certs_tls
+    }
+    component "Secret\nminio-aws-keys" as aws_keys
+}
+
+' ========== Relationships ==========
+
+' --- Browser → Console (Orange Path) ---
+browser -[#FF9800]-> eg : HTTPS
+eg -[#FF9800]-> http_route : match hostname 'minio-console.agf.com'
+http_route -[#FF9800]-> btp : backendRef
+btp -[#FF9800]-> m_c : validates TLS
+m_c -[#FF9800]-> console_0
+
+' --- S3 Client → HTTPS → NodePort → Headless → Pod (Green Path) ---
+app -[#4CAF50]-> mpe : HTTPS (S3 API)
+mpe -[#4CAF50]-> api_p0
+mpe -[#4CAF50]-> api_p1
+
+' --- Storage Mounts ---
+data_p0 --> pv_p0 : mount /data
+data_p1 --> pv_p1 : mount /data
+
+' --- Certificate Issuance Chain ---
+issuer -right-> cert : issues
+cert -right-> certs_tls : generates Secret
+
+' --- BackendTLSPolicy references CA ---
+btp ..> certs_tls : caCertificateRef
+
+' --- Pod mounts TLS certificates ---
+certs_0 ..> certs_tls : mount /etc/minio/certs
+certs_1 ..> certs_tls : mount /etc/minio/certs
+
+' --- Access Keys injection ---
+access_0 ..> aws_keys : envFrom
+access_1 ..> aws_keys : envFrom
+
+' ========== Notes ==========
+note right of btp
+  Envoy performs backend TLS validation:
+  1. Verifies the TLS certificate presented by minio-console Pods
+  2. Trusts the CA stored in the minio-tls Secret
+  3. Validates that the certificate SAN matches the specified hostname
+end note
+
+note right of cert_flow
+  cert-manager automatically provisions the minio-tls Secret
+  Used for:
+  • S3 API TLS termination
+  • Console TLS termination
+end note
+
+note right of browser
+  User accesses address 'https://minio-console.agf.com:30737' using browser
+end note
+
+note left of app
+  Machine-to-machine communication
+  S3 SDK / CLI connects directly to NodePort Service
+end note
+@enduml
