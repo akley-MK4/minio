@@ -74,7 +74,11 @@ autoscaling:
   targetCPUUtilizationPercentage: 80
   # targetMemoryUtilizationPercentage: 80
 
-accessKeyName: "minio-aws-keys"
+accessKey:
+  secretName: "minio-aws-keys"
+  create: true
+  accessKeyIdBase64: "bWluaW8="
+  secretAccessKeyBase64: "bWluaW9taW5pbw=="
 
 cert:
   certificateName: "minio-cert"
